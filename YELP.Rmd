@@ -1,0 +1,1173 @@
+---
+title: "YelpAssignment"
+author: "Saloni Kataria(662519005), Anay Dutta(651901809), Silvy Mathew (653489701)"
+date: "10/04/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(readr)
+library(ggplot2)
+library(broom)
+library(tidyr)
+library(tidyverse)
+library(SnowballC)
+library(textstem)
+library(tidytext)
+library(reshape2)
+library(wordcloud)
+library(textdata)
+library(caret)
+
+```
+
+```{r}
+yelpReviews <- read_csv2('yelpRestaurantReviews_sample_s22.csv')
+glimpse(yelpReviews)
+```
+
+```{r}
+############################ Question 1 #########################################
+##a (i) distribution of star ratings
+resReviewsData %>% group_by(starsReview) %>% count();
+
+ggplot(resReviewsData, aes(x = starsReview)) +
+  geom_bar(fill="Blue")+
+  labs(title= "Stars Count",
+       x="Stars")
+
+# plotting to check relation between words funny, cool and useful to reviews
+
+ggplot(resReviewsData, aes(x= funny, y=starsReview)) +geom_point();
+ggplot(resReviewsData, aes(x= cool, y=starsReview)) +geom_point();
+ggplot(resReviewsData, aes(x= useful, y=starsReview)) +geom_point();
+
+
+ggplot(resReviewsData, aes(x= funny, y=cool)) +geom_point();
+ggplot(resReviewsData, aes(x= funny, y=useful)) +geom_point();
+ggplot(resReviewsData, aes(x= cool, y=useful)) +geom_point();
+
+
+# 1 b relation between star ratings and business ids
+resReviewsData %>% group_by(starsBusiness) %>% summarise(mean(starsReview));
+resReviewsData %>% group_by(state) %>% tally()%>% View()
+
+```
+
+```{r}
+############################ Question 2 #########################################
+#Restructure it in the one-token-per-row format
+#If you want to keep only the those reviews from 5-digit postal-codes
+rrData <- yelpReviews %>% filter(str_detect(postal_code, "^[0-9]{1,5}"))
+
+yelpTokens <- rrData %>% select(review_id, starsReview, text ) %>% unnest_tokens(word, text)
+yelpTokens
+
+#remove stop words
+yelpTokens <- yelpTokens %>% anti_join(stop_words)
+
+#counting the most common words
+yelpTokens %>% count(word, sort=TRUE) %>% top_n(10)
+
+#Create a visualization of the most common words
+yelpTokens %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 7000) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()
+
+#CLEANING
+#Let's remove the words which are not present in at least 10(??) reviews
+rareWords <- yelpTokens %>% count(word, sort=TRUE) %>% filter(n<10)
+rareWords
+
+#removing rare words
+yelpTokens <- anti_join(yelpTokens, rareWords)
+
+#Remove the terms containing digits
+yelpTokens <- yelpTokens %>% filter(str_detect(word,"[0-9]") == FALSE)
+
+# filter out words with less than 3 characters more than 15 characters
+yelpTokens <- yelpTokens %>% filter(str_length(word)<=3 | str_length(word)<=15)
+
+
+
+#In next step we will find the most common negative and positive words using Bing dictionary
+bing_word_counts <- yelpTokens %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment,starsReview ,sort = TRUE) %>%
+  ungroup()
+bing_word_counts  %>% group_by(starsReview)
+
+
+
+
+bing_word_counts %>%
+  group_by(sentiment ) %>%
+  top_n(20) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment , scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+
+
+#based on star reviews
+bing_word_counts %>%
+  group_by(sentiment , starsReview ) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~c(starsReview ), scales = "free_y") +
+  labs(y = "Contribution to sentiment",
+       x = NULL) +
+  coord_flip()
+
+
+
+#Wordclouds
+library(wordcloud)
+
+yelpTokens %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(commonality.cloud(word, n, max.words = 100))
+
+
+
+#find the most common positive and negative words. 
+library(reshape2)
+library(reshape)
+yelpTokens %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0 , margin = TRUE) %>%
+  comparison.cloud(scale=c(1.8,.2), rot.per=.2,  ,max.words = 200 , colors = c("gray20", "darkred") , title.size=1 )
+
+```
+
+```{r}
+############################ Question 3 #########################################
+#lemmatize
+yelpTokens <- yelpTokens %>% mutate(word = textstem::lemmatize_words(word))
+
+#How many matching terms which match the dictionary terms
+--#NRC Dictionary
+nrcpositive <- get_sentiments("nrc") %>%
+  filter((sentiment %in% c('positive', 'joy', 'anticipation', 'trust')))
+yelpTokens %>%
+  inner_join(nrcpositive) %>%
+  count(word, sort = TRUE)
+
+nrcnegative <- get_sentiments("nrc") %>%
+  filter(sentiment %in% c('anger', 'disgust', 'fear', 'sadness', 'negative'))
+yelpTokens %>%
+  inner_join(nrcnegative) %>%
+  count(word, sort = TRUE)
+
+
+--#Bing Dictionary
+Bingpositive <- get_sentiments("bing") %>%
+  filter(sentiment == "positive")
+yelpTokens %>%
+  inner_join(Bingpositive) %>%
+  count(word, sort = TRUE)
+
+Bingnegative <- get_sentiments("bing") %>%
+  filter(sentiment == "negative")
+yelpTokens %>%
+  inner_join(Bingnegative) %>%
+  count(word, sort = TRUE)
+
+
+--#afinn Dictionary
+
+afinnpositive <- get_sentiments("afinn") %>%
+  filter(value > 0)
+yelpTokens %>%
+  inner_join(afinnpositive) %>%
+  count(word, sort = TRUE)
+
+afinnnegative <- get_sentiments("afinn") %>%
+  filter(value < 0)
+yelpTokens %>%
+  inner_join(afinnnegative) %>%
+  count(word, sort = TRUE)
+
+
+#(b)overlap in matching terms between the different dictionaries
+
+afinn <- yelpTokens %>%
+  inner_join(get_sentiments("afinn")) %>%
+  group_by(index = row_number()  %/% 80) %>%
+  summarise(sentiment = sum(value)) %>%
+  mutate(method = "AFINN")
+
+
+bing_and_nrc <- bind_rows(
+  yelpTokens %>%
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  yelpTokens %>%
+    inner_join(get_sentiments("nrc") %>%
+                 filter(sentiment %in% c("positive",
+                                         "negative", 'anger', 'disgust', 'fear', 'sadness', 'negative'))) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index = row_number()  %/% 80, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+#We now have an estimate of the net sentiment (positive - negative)
+
+bind_rows(afinn,
+          bing_and_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free")
+
+```
+
+```{r}
+############################ Question 4 #########################################
+#most commonly used words for each review
+book_words <- yelpTokens %>%  filter(! word %in% c('food', 'time', 'restaurant', 'service')) %>%
+  count(starsReview, word,sort = TRUE) %>%
+  ungroup()
+
+total_words <- book_words %>%
+  group_by(starsReview) %>%
+  summarize(total = sum(n))
+book_words <- left_join(book_words, total_words)
+book_words
+
+
+#distribution of term frequency
+ggplot(book_words, aes(n/total, fill = starsReview)) +
+  geom_histogram(show.legend = FALSE) +
+  xlim(NA, 0.0009) +
+  facet_wrap(~starsReview, ncol = 2, scales = "free_y" )
+#------------------------------q4) Different approch----------------------------------------------------
+#we have already lemmatized
+yelpTokens <- yelpTokens %>% filter(str_length(word)<=3 | str_length(word)<=15)
+
+yelpTokens<- yelpTokens %>% group_by(review_id, starsReview) %>% count(word) 
+yelpTokens  %>%  arrange(desc(n))
+
+##count total number of words by review and adding it as coulumn
+total_words <-yelpTokens %>% group_by(review_id) %>% count(word, sort=TRUE) %>% summarise(total=sum(n))
+book_words <-left_join(yelpTokens, total_words)
+
+#tf
+book_words <-book_words %>% mutate(tf=n/total)
+book_words 
+
+##Easier way to calculate tf-idf is using bind_tfidf function
+
+yelpTokens <- yelpTokens %>% bind_tf_idf(word, review_id, n)
+yelpTokens
+
+##getting sentiment of words in yelpTokens using Bing
+bing_sentiments <- yelpTokens %>% inner_join( get_sentiments("bing"), by="word")
+bing_sentiments 
+
+#Terms with higher tf-idf based on Bing
+bing_sentiments %>%
+  select(-starsReview) %>%
+  arrange(desc(tf_idf)) 
+
+bing_sentiments %>%
+  group_by(starsReview) %>%
+  top_n(13, tf) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf)) %>%
+  ggplot(aes(word, tf_idf, fill = starsReview)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~starsReview, ncol = 2, scales = "free") +
+  coord_flip()
+
+##getting sentiment of words in yelpTokens using afnin
+afinn_sentiments <- yelpTokens %>% inner_join( get_sentiments("afinn"), by="word")
+afinn_sentiments 
+
+#Terms with higher tf-idf based on afinn
+afinn_sentiments %>%
+  select(-starsReview) %>%
+  arrange(desc(tf_idf)) 
+
+
+
+#counting the terms, with positive/negative sentiments
+
+xx <- bing_sentiments %>% group_by(word, sentiment) %>% summarise(totOcc=sum(n)) %>% arrange(sentiment, desc(totOcc))
+xx <- xx %>% mutate (totOcc=ifelse(sentiment=="positive", totOcc, -totOcc)) 
+xx <- ungroup(xx) 
+
+#which are the most positive and most negative words in reviews
+xx %>% top_n(25)
+xx %>% top_n(-25)
+
+#plotting these 
+rbind(top_n(xx, 25), top_n(xx, -25)) %>% mutate(word=reorder(word,totOcc)) %>% ggplot(aes(word, totOcc, fill=sentiment)) +geom_col()+coord_flip()
+
+
+
+#Now we will repeat this using NRC dictionary
+nrc_sentiment <- yelpTokens %>% inner_join(get_sentiments("nrc"), by="word") %>% 
+  group_by (word, sentiment) %>% summarise(totOcc=sum(n)) %>% 
+  arrange(sentiment, desc(totOcc))
+nrc_sentiment
+
+#words are there for the different sentiment categories
+nrc_sentiment %>% group_by(sentiment) %>% summarise(count=n(), sumn=sum(totOcc))
+
+
+nrc_sentiment %>% group_by(sentiment) %>% arrange(sentiment, desc(totOcc)) %>% top_n(10) %>% view()
+
+
+#We consider {anger, disgust, fear sadness, negative} to denote 'bad' reviews, 
+#and {positive, joy, anticipation, trust} to denote 'good' reviews
+
+  
+yy <- nrc_sentiment %>% mutate(goodBad=ifelse(sentiment %in% c('anger', 'disgust', 'fear', 'sadness', 'negative'), -totOcc,
+                                              ifelse(sentiment %in% c('positive', 'joy', 'anticipation', 'trust'), totOcc, 0)))
+
+yy<-ungroup(yy)
+top_n(yy, -20)
+top_n(yy, 20)
+
+#looking into sentiment by review and see how that relates to review's star ratings
+#we group by review_id , stars
+bing_sentiments
+revbing_sentiments <- bing_sentiments %>% group_by(review_id,starsReview) %>% 
+  summarise(nwords=n(),posSum=sum(sentiment=='positive'), 
+            negSum=sum(sentiment=='negative'))
+
+#calculate sentiment score based on proportion of positive, negative words
+
+revbing_sentiments <- revbing_sentiments %>% mutate(posProp=posSum/nwords, negProp=negSum/nwords)
+revbing_sentiments <- revbing_sentiments %>% mutate(sentimentScore=posProp-negProp)
+
+#Analysis by review sentiment
+revbing_sentiments %>% group_by(starsReview) %>%
+  summarise(avgPos=mean(posProp), avgNeg=mean(negProp), avgSentiSc=mean(sentimentScore))
+
+#We find that review star ratings correspond to the positive/negative sentiment words
+
+
+
+#We repeat the same using  AFINN dictionary words
+
+afinn_sentiments
+afinn_sentiments <- afinn_sentiments %>% group_by(review_id, starsReview) %>% summarise(nwords=n(), sentiSum =sum(value))
+afinn_sentiments %>% group_by(starsReview)  %>% summarise(avgLen=mean(nwords), avgSenti=mean(sentiSum))
+
+
+#Predicting StarRating based on text of a review or classify Reviews 
+
+#considering reviews with 1 to 2 stars as negative,
+#and this with 4 to 5 stars as positive
+
+afinn_sentiments <- afinn_sentiments %>% mutate(actual_GoodBad = ifelse(starsReview <= 2, -1, ifelse(starsReview  >=3, 1, 0 )))
+afinn_sentiments <- afinn_sentiments %>% mutate(pred_GoodBad = ifelse( sentiSum > 0, 1, -1) )
+afinn_sentiments
+#filter out the reviews with 3 stars,
+afinn_sentiments <- afinn_sentiments %>% filter(actual_GoodBad!=0)
+
+#confusion matrix
+table(actual=afinn_sentiments$actual_GoodBad, predicted=afinn_sentiments$pred_GoodBad )
+
+confusionMatrix(table(actual=afinn_sentiments$actual_GoodBad, predicted=afinn_sentiments$pred_GoodBad ))
+
+
+#Predicting StarRating Using Bing
+revbing_sentiments
+
+revbing_sentiments <- revbing_sentiments %>% mutate(actual_GoodBad = ifelse(starsReview <= 2, -1, ifelse(starsReview >=3, 1, 0 )))
+revbing_sentiments <- revbing_sentiments %>% mutate(pred_GoodBad = ifelse( sentimentScore > 0, 1, -1) )
+
+confusionMatrix(table(actual=revbing_sentiments$actual_GoodBad, predicted=revbing_sentiments$pred_GoodBad ))
+
+#We find that Afinn Dictionary gives a better Accuracy
+```
+
+```{r}
+############################ Question 5 #########################################
+#in this part we will build a model for prediction
+#We start by Random Forest model, we also need data in Doctument term matrix form
+
+############################ BING DICTIONARY ######################################################################
+bing_sentiments <- yelpTokens %>% inner_join( (get_sentiments("bing") ), by="word")
+bing_sentiments
+#the terms matching Sentiments of Bing of dictionary
+
+DTMbing_sentiments <- bing_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+DTMbing_sentiments
+
+dim(DTMbing_sentiments)
+
+#filter out the reviews with stars=3, and calculate GoodBad sentiment 'class'
+DTMbing_sentiments <- DTMbing_sentiments %>% filter(starsReview!=3) %>% mutate(GoodBad=ifelse(starsReview<=2, -1, 1)) %>% select(-starsReview)
+
+
+#replacing NAs with 0
+DTMbing_sentiments[is.na(DTMbing_sentiments)] <- 0
+dim(DTMbing_sentiments)
+
+DTMbing_sentiments %>% group_by(GoodBad) %>% tally()
+
+library(ranger)
+library(rsample)
+DTMbing_sentiments$GoodBad <- as.factor(DTMbing_sentiments$GoodBad)
+DTMbing_sentiments_split<- initial_split(DTMbing_sentiments, 0.5)
+
+train_bing <- training(DTMbing_sentiments_split)
+test_bing <- testing(DTMbing_sentiments_split)
+
+rfModel1 <-ranger(dependent.variable.name = "GoodBad", 
+                 data=train_bing %>% select(-review_id), num.trees = 500, 
+                 importance='permutation', probability = TRUE)
+
+
+importance(rfModel1) %>% view()
+
+#Making Predictions on train set
+ypred_train <- predict(rfModel1, train_bing %>% select(-review_id))$predictions
+table(actual=train_bing$GoodBad, predictions=ypred_train[,2]>0.5)
+
+library(ROCR)
+library(pROC)
+rocTrn <- roc(train_bing$GoodBad, ypred_train[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue')
+pred1=prediction(ypred_train[,2], train_bing$GoodBad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+
+
+#Making Predictions on test set
+ypred_test <- predict(rfModel1, test_bing %>% select(-review_id,-GoodBad))$predictions
+table(actual=test_bing$GoodBad, predictions=ypred_test[,2]>0.5)
+
+rocTst <- roc(test_bing$GoodBad, ypred_test[,2], levels=c(-1, 1))
+plot.roc(rocTst, col='red')
+pred=prediction(ypred_test[,2], test_bing$GoodBad)
+sprintf("AUC: %f", performance(pred, "auc")@y.values)
+
+
+
+#combining both the plots
+plot.roc(rocTrn, col='blue')
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"),col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+
+#------------------------------------------------------------------------------------------
+#We Now build a model based on Naive Bayes
+
+library(e1071)
+
+nbModel1 <- naiveBayes(GoodBad ~ ., data=train_bing %>% select(-review_id) , method = "nb")
+NBpredTrn <- predict(nbModel1, train_bing, type = "raw")
+table(actual= train_bing$GoodBad, predicted= NBpredTrn[,2]>0.5)
+auc(as.numeric(train_bing$GoodBad), NBpredTrn[,2])
+
+
+#Predictions on test set
+NBpredTst <- predict(nbModel1, test_bing, type = "raw")
+table(actual= test_bing$GoodBad, predicted= NBpredTst[,2]>0.5)
+auc(as.numeric(test_bing$GoodBad), NBpredTst[,2])
+
+
+rocTrn <- roc(train_bing$GoodBad, NBpredTrn[,2], levels=c(-1, 1))
+rocTst <- roc(test_bing$GoodBad, NBpredTst[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue', legacy.axes = TRUE)
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("red", "blue"), lwd=2, cex=0.8, bty='n')
+
+#We Now build a model based on SVM---------------------------------------------------------------- 
+
+
+library(e1071)
+svModel1 <- svm(GoodBad ~ ., data=train_bing %>% select(-review_id) , kernel="linear", cost=8)
+
+#Predicting on Train set
+ypredSVMtrn <- predict(svModel1, train_bing )
+confusionMatrix(table(actual= train_bing$GoodBad, predicted= ypredSVMtrn))
+
+svmROCtrn <- roc(train_bing$GoodBad, as.numeric(ypredSVMtrn) , levels=c(-1, 1))
+plot.roc(svmROCtrn, col='blue')
+
+#Predicting on Test set
+ypredSVMtst <- predict(svModel1, test_bing )
+confusionMatrix(table(actual= test_bing$GoodBad, predicted= ypredSVMtst))
+
+svmROCtst <- roc(test_bing$GoodBad, as.numeric(ypredSVMtst) , levels=c(-1, 1))
+plot.roc(svmROCtst, col='red')
+
+plot.roc(svmROCtrn, col='blue', legacy.axes = TRUE)
+plot.roc(svmROCtst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+#--------------------------Buiding Model Using XG boost---------------------------------------------------------
+
+library(xgboost)
+library(Matrix)
+
+ctrain <- xgb.DMatrix(Matrix(data.matrix(train_bing %>% select(-GoodBad , -review_id))), label = as.numeric(train_bing$GoodBad)-1)
+
+xgbmodel3 <- xgboost(data = ctrain, max.depth = 10, eta = .001, min_child_weight = 2, nround = 1500, objective = "multi:softmax", num_class = 30 ,booster="gblinear" ,verbose = 2)
+train_bing1 <- train_bing %>% select(-GoodBad , -review_id)
+xgbmodel.predictTrn <- predict(xgbmodel3, newdata = data.matrix(train_bing1))
+table( actual = train_bing$GoodBad, prediction = as.numeric(xgbmodel.predictTrn))
+roc(train_bing$GoodBad, as.numeric(xgbmodel.predictTrn),  levels=c(-1, 1) )
+
+test_bing1 <- test_bing %>% select(-GoodBad , -review_id)
+xgbmodel.predict <- predict(xgbmodel3, newdata = data.matrix(test_bing1))
+
+table(actual = test_bing$GoodBad , prediction = as.numeric(xgbmodel.predict)  )
+roc(test_bing$GoodBad, as.numeric(xgbmodel.predict),  levels=c(-1, 1) )
+
+plot.roc(train_bing$GoodBad, as.numeric(xgbmodel.predictTrn),  levels=c(-1, 1) , col='blue', legacy.axes = TRUE)
+plot.roc(test_bing$GoodBad, as.numeric(xgbmodel.predict),  levels=c(-1, 1) , col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+#-------------------------------------------------Linear Model Lasso------------------------
+
+library(glmnet)
+Ltrain <- Matrix(data.matrix(train_bing %>% select(-GoodBad , -review_id)))
+no.text.cv <- cv.glmnet(Ltrain, y=as.factor(train_bing$GoodBad), 
+                      alpha=0.9, family='binomial',type.measure='auc', nfolds=5, intercept=F)
+
+
+plot(no.text.cv)
+abline(v = log(no.text.cv$lambda.1se), col = "red", lty = "dashed")
+
+library(broom)
+#Finding Top influential variables 
+coef(no.text.cv, s = "lambda.1se") %>%
+  tidy() %>%
+  filter(row != "(Intercept)") %>%
+  top_n(25, wt = abs(value)) %>%
+  ggplot(aes(value, reorder(row, value))) +
+  geom_point() +
+  ggtitle("Top 25 influential variables") +
+  xlab("Coefficient") +
+  ylab(NULL)
+
+#Predictions on Train set
+train_bing1 <- (data.matrix(train_bing %>% select(-GoodBad , -review_id)))
+text.preds <- predict(no.text.cv, train_bing1 ,type='class')
+confusionMatrix(table(prediction = as.numeric(text.preds ), actual = train_bing$GoodBad))
+
+library(caret)
+sensitivity(table(prediction = as.numeric(text.preds ), actual = train_bing$GoodBad))
+specificity(table(prediction = as.numeric(text.preds ), actual = train_bing$GoodBad))
+
+
+#ROC, AUC performance on train set
+scores = prediction(as.numeric(text.preds) , train_bing$GoodBad )
+aucPerf_lasso =performance(scores, "tpr", "fpr")
+plot(aucPerf_lasso ,  col = "Red")
+abline(a=0, b= 1)
+
+#AUC value
+aucPerf_ov=performance(scores, "auc")
+aucPerf_ov@y.values
+
+#Predictions on Test Set
+test_bing1 <- (data.matrix(test_bing %>% select(-GoodBad , -review_id)))
+test.preds <- predict(no.text.cv, test_bing1 ,type='class')
+confusionMatrix(table(prediction = as.numeric(test.preds ), actual = test_bing$GoodBad))
+
+scores1 = prediction(as.numeric(test.preds) , test_bing$GoodBad )
+aucPerf_lasso1 =performance(scores1, "tpr", "fpr")
+plot(aucPerf_lasso1 ,  col = "Red")
+abline(a=0, b= 1)
+
+#AUC value
+aucPerf_ov1=performance(scores1, "auc")
+aucPerf_ov1@y.values
+
+#plot ROC
+
+plot(aucPerf_lasso ,  col = "Blue" ,  legacy.axes = TRUE)
+plot(aucPerf_lasso1 ,  col = "Red" , add = TRUE)
+abline(a=0, b= 1)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"),lwd = 1, cex=0.7, bty='n')
+```
+
+
+```{r}
+############################ AFINN DICTIONARY ######################################################################
+
+afinn_sentiments <- yelpTokens %>% inner_join( get_sentiments("afinn"), by="word")
+afinn_sentiments
+
+#the terms matching Sentiments of Afinn of dictionary
+
+DTMafinn_sentiments <- afinn_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+DTMafinn_sentiments
+
+dim(DTMafinn_sentiments)
+
+#filter out the reviews with stars=3, and calculate GoodBad sentiment 'class'
+DTMafinn_sentiments <- DTMafinn_sentiments %>% filter(starsReview!=3) %>% mutate(GoodBad=ifelse(starsReview<=2, -1, 1)) %>% select(-starsReview)
+
+
+#replacing NAs with 0
+DTMafinn_sentiments[is.na(DTMafinn_sentiments)] <- 0
+dim(DTMafinn_sentiments)
+
+DTMafinn_sentiments %>% group_by(GoodBad) %>% tally()
+
+#---------------------------------- RANDOM FOREST FOR AFINN --------------------------------
+
+library(ranger)
+library(rsample)
+DTMafinn_sentiments$GoodBad <- as.factor(DTMafinn_sentiments$GoodBad)
+DTMafinn_sentiments_split<- initial_split(DTMafinn_sentiments, 0.5)
+
+train_afinn <- training(DTMafinn_sentiments_split)
+test_afinn <- testing(DTMafinn_sentiments_split)
+
+rfModel2 <-ranger(dependent.variable.name = "GoodBad", 
+                  data=train_afinn %>% select(-review_id), num.trees = 500, 
+                  importance='permutation', probability = TRUE)
+
+
+importance(rfModel2) %>% view()
+
+#Making Predictions on train set
+ypred_train <- predict(rfModel2, train_afinn %>% select(-review_id))$predictions
+table(actual=train_afinn$GoodBad, predictions=ypred_train[,2]>0.5)
+
+library(ROCR)
+library(pROC)
+rocTrn <- roc(train_afinn$GoodBad, ypred_train[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue')
+pred1=prediction(ypred_train[,2], train_afinn$GoodBad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+
+
+#Making Predictions on test set
+ypred_test <- predict(rfModel2, test_afinn %>% select(-review_id))$predictions
+table(actual=test_afinn$GoodBad, predictions=ypred_test[,2]>0.5)
+
+rocTst <- roc(test_afinn$GoodBad, ypred_test[,2], levels=c(-1, 1))
+plot.roc(rocTst, col='red')
+pred=prediction(ypred_test[,2], test_afinn$GoodBad)
+sprintf("AUC: %f", performance(pred, "auc")@y.values)
+
+#combining both the plots
+plot.roc(rocTrn, col='blue')
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"),col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+#---------------------------------- NAIVE BAYES FOR AFINN --------------------------------
+
+library(e1071)
+
+nbModel2 <- naiveBayes(GoodBad ~ ., data=train_afinn %>% select(-review_id))
+NBpredTrn <- predict(nbModel2, train_afinn, type = "raw")
+table(actual= train_afinn$GoodBad, predicted= NBpredTrn[,2]>0.5)
+auc(as.numeric(train_afinn$GoodBad), NBpredTrn[,2])
+
+
+#Predictions on test set
+NBpredTst <- predict(nbModel2, test_afinn, type = "raw")
+table(actual= test_afinn$GoodBad, predicted= NBpredTst[,2]>0.5)
+auc(as.numeric(test_afinn$GoodBad), NBpredTst[,2])
+
+
+rocTrn <- roc(train_afinn$GoodBad, NBpredTrn[,2], levels=c(-1, 1))
+rocTst <- roc(test_afinn$GoodBad, NBpredTst[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue', legacy.axes = TRUE)
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+#---------------------------------- BOOSTED TREE FOR AFINN --------------------------------
+library(xgboost)
+library(Matrix)
+
+ctrain <- xgb.DMatrix(Matrix(data.matrix(train_afinn %>% select(-GoodBad , -review_id))), label = as.numeric(train_afinn$GoodBad)-1)
+
+xgbmodel2 <- xgboost(data = ctrain, max.depth = 10, eta = .001, min_child_weight = 2, nround = 1500, objective = "multi:softmax", num_class = 30 ,booster="gblinear" ,verbose = 2)
+train_afinn1 <- train_afinn %>% select(-GoodBad , -review_id)
+xgbmodel.predictTrn <- predict(xgbmodel2, newdata = data.matrix(train_afinn1))
+table(prediction = as.numeric(xgbmodel.predictTrn), actual = train_afinn$GoodBad)
+roc(train_afinn$GoodBad, as.numeric(xgbmodel.predictTrn),  levels=c(-1, 1) )
+
+test_afinn1 <- test_afinn %>% select(-GoodBad , -review_id)
+xgbmodel.predict <- predict(xgbmodel2, newdata = data.matrix(test_afinn1))
+
+table(prediction = as.numeric(xgbmodel.predict), actual = test_afinn$GoodBad )
+roc(test_afinn$GoodBad, as.numeric(xgbmodel.predict),  levels=c(-1, 1) )
+```
+
+```{r}
+############################ NRC DICTIONARY ######################################################################
+Nrc_sentiments <- yelpTokens %>% inner_join( (get_sentiments("nrc") ), by="word") %>% distinct(word, .keep_all = TRUE)
+Nrc_sentiments
+#the terms matching Sentiments of Bing of dictionary
+
+DTMnrc_sentiments <- Nrc_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+DTMnrc_sentiments
+
+dim(DTMnrc_sentiments)
+
+#filter out the reviews with stars=3, and calculate GoodBad sentiment 'class'
+DTMnrc_sentiments <- DTMnrc_sentiments %>% filter(starsReview!=3) %>% mutate(GoodBad=ifelse(starsReview<=2, -1, 1)) %>% select(-starsReview)
+
+
+#replacing NAs with 0
+DTMnrc_sentiments[is.na(DTMnrc_sentiments)] <- 0
+dim(DTMnrc_sentiments)
+
+DTMnrc_sentiments %>% group_by(GoodBad) %>% tally()
+
+library(ranger)
+library(rsample)
+DTMnrc_sentiments$GoodBad <- as.factor(DTMnrc_sentiments$GoodBad)
+DTMnrc_sentiments_split<- initial_split(DTMnrc_sentiments, 0.5)
+
+train_nrc <- training(DTMnrc_sentiments_split)
+test_nrc <- testing(DTMnrc_sentiments_split)
+
+rfModel_nrc <-ranger(dependent.variable.name = "GoodBad", 
+                     data=train_nrc %>% select(-review_id), num.trees = 500, 
+                     importance='permutation', probability = TRUE)
+
+
+importance(rfModel_nrc) %>% view()
+#Making Predictions on train set
+ypred_train <- predict(rfModel_nrc, train_nrc %>% select(-review_id))$predictions
+table(actual=train_nrc$GoodBad, predictions=ypred_train[,2]>0.5)
+
+library(ROCR)
+library(pROC)
+rocTrn <- roc(train_nrc$GoodBad, ypred_train[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue')
+pred1=prediction(ypred_train[,2], train_nrc$GoodBad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+
+
+#Making Predictions on test set
+ypred_test <- predict(rfModel_nrc, test_nrc %>% select(-review_id))$predictions
+table(actual=test_nrc$GoodBad, predictions=ypred_test[,2]>0.5)
+
+rocTst <- roc(test_nrc$GoodBad, ypred_test[,2], levels=c(-1, 1))
+
+plot.roc(rocTst, col='red')
+pred=prediction(ypred_test[,2], test_nrc$GoodBad)
+sprintf("AUC: %f", performance(pred, "auc")@y.values)
+
+
+#combining both the plots
+plot.roc(rocTrn, col='blue')
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"),col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+
+#We Now build a model based on Naive Bayes
+
+library(e1071)
+
+nbModel_nrc <- naiveBayes(GoodBad ~ ., data=train_nrc %>% select(-review_id))
+NBpredTrn <- predict(nbModel_nrc, train_nrc, type = "raw")
+table(actual= train_nrc$GoodBad, predicted= NBpredTrn[,2]>0.5)
+auc(as.numeric(train_nrc$GoodBad), NBpredTrn[,2])
+
+
+#Predictions on test set
+NBpredTst <- predict(nbModel_nrc, test_nrc, type = "raw")
+table(actual= test_nrc$GoodBad, predicted= NBpredTst[,2]>0.5)
+auc(as.numeric(test_nrc$GoodBad), NBpredTst[,2])
+
+
+rocTrn <- roc(train_nrc$GoodBad, NBpredTrn[,2], levels=c(-1, 1))
+rocTst <- roc(test_nrc$GoodBad, NBpredTst[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue', legacy.axes = TRUE)
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+
+#We Now build a model based on Boosted Tree Model
+library(xgboost)
+library(Matrix)
+
+ctrain <- xgb.DMatrix(Matrix(data.matrix(train_nrc %>% select(-GoodBad , -review_id))), label = as.numeric(train_nrc$GoodBad)-1)
+
+xgbmodel_nrc <- xgboost(data = ctrain, max.depth = 10, eta = .001, min_child_weight = 2, nround = 1500, objective = "multi:softmax", num_class = 30 ,booster="gblinear" ,verbose = 2)
+train_nrc1 <- train_nrc %>% select(-GoodBad , -review_id)
+xgbmodel.predictTrn <- predict(xgbmodel_nrc, newdata = data.matrix(train_nrc1))
+table(prediction = as.numeric(xgbmodel.predictTrn), actual = train_nrc$GoodBad)
+roc(train_nrc$GoodBad, as.numeric(xgbmodel.predictTrn),  levels=c(-1, 1) )
+
+test_nrc1 <- test_nrc %>% select(-GoodBad , -review_id)
+xgbmodel.predict <- predict(xgbmodel_nrc, newdata = data.matrix(test_nrc1))
+
+table(prediction = as.numeric(xgbmodel.predict), actual = test_nrc$GoodBad )
+roc(test_nrc$GoodBad, as.numeric(xgbmodel.predict),  levels=c(-1, 1) )
+```
+
+
+```{r}
+#(C)a combination of  the three dictionaries, ie. combine all dictionary terms.  
+#What is the size of the document-term matrix
+
+
+bing_senti <- get_sentiments("bing")
+afinn_senti <- get_sentiments("afinn")
+nrc_senti <- get_sentiments("nrc")
+
+bing_senti <- bing_senti[,1]
+afinn_senti <- afinn_senti[ , 1]
+nrc_senti <- nrc_senti[ , 1]
+
+all_senti <- bind_rows(bing_senti, afinn_senti , nrc_senti)
+all_sentiments <- yelpTokens %>% inner_join(data.frame(all_senti), by="word") %>% distinct(word, .keep_all = TRUE)
+
+
+
+#Converting into document term Matrix
+DTMall_sentiments <- all_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+DTMall_sentiments
+install.packages("devtools", dependencies = TRUE)
+install.packages("ulimit")
+devtools::install_github("krlmlr/ulimit")
+ulimit::memory_limit(2000)
+
+memory.limit()
+memory.limit(size = 30885)
+
+
+
+afinn_sentiments <- yelpTokens %>% inner_join( get_sentiments("afinn"), by="word")
+DTMafinn_sentiments <- afinn_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+
+nrc_sentiments <- yelpTokens %>% inner_join( get_sentiments("nrc"), by="word")
+DTMnrc_sentiments <- nrc_sentiments %>% pivot_wider (id_cols = c(review_id, starsReview), names_from = word, values_from = tf_idf) %>% ungroup()
+
+dim(DTMnrc_sentiments)[2]
+dim(DTMafinn_sentiments)[2]
+dim(DTMbing_sentiments)[2]
+dim(DTMall_sentiments)[2]
+
+# Pie Chart with Percentages
+slices <- c(1881, 1668,653, 1223)
+lbls <- c("Combined_dictionary","NRC","Afinn","Bing")
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct) # add percents to labels
+lbls <- paste(lbls,"%",sep="") # ad % to labels
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+    main="Pie Chart of Sentiments")
+
+
+
+#filter out the reviews with stars=3, and calculate GoodBad sentiment 'class'
+DTMall_sentiments <- DTMall_sentiments %>% filter(starsReview!=3) %>% mutate(GoodBad=ifelse(starsReview<=2, -1, 1)) %>% select(-starsReview)
+
+#replacing NAs with 0
+DTMall_sentiments[is.na(DTMall_sentiments)] <- 0
+dim(DTMall_sentiments)
+
+DTMall_sentiments %>% group_by(GoodBad) %>% tally()
+
+library(glmnet)
+library(rsample)
+DTMall_sentiments$GoodBad <- as.factor(DTMall_sentiments$GoodBad)
+DTMall_sentiments_split<- initial_split(DTMall_sentiments, 0.5)
+
+train_all <- training(DTMall_sentiments_split)
+test_all <- testing(DTMall_sentiments_split)
+
+Ltrain1 <- Matrix(data.matrix(train_all %>% select(-GoodBad , -review_id)))
+no.text.cv1 <- cv.glmnet(Ltrain1, y=as.factor(train_all$GoodBad), 
+                        alpha=0.9, family='binomial',type.measure='auc', nfolds=5, intercept=F)
+
+
+plot(no.text.cv1)
+abline(v = log(no.text.cv1$lambda.1se), col = "red", lty = "dashed")
+
+library(glmnet)
+#Predictions on Test set
+test_all1 <- data.matrix(test_all %>% select(-GoodBad , -review_id))
+test.predsAll <- predict(no.text.cv1, test_all1 ,type='class')
+confusionMatrix(table(prediction = as.numeric(test.predsAll ), actual = test_all$GoodBad))
+
+scores2 = prediction(as.numeric(test.predsAll) , test_all$GoodBad )
+aucPerf_lasso2 =performance(scores2, "tpr", "fpr")
+plot(aucPerf_lasso2 ,  col = "Red")
+abline(a=0, b= 1)
+
+#AUC value
+aucPerf_ov2 = performance(scores2, "auc")
+aucPerf_ov2@y.values
+```
+
+```
+
+```{r}
+########################### Model using a broader set of terms #######################################################
+#removing words which occur in too many or too few reviews
+rWords<-yelpTokens %>% group_by(word) %>% summarise(nr=n()) %>% arrange(desc(nr))
+top_n(rWords, 20)
+top_n(rWords, -20)
+
+#We remove words which occur in, for eg, > 90% of reviews, and in less than 30 reviews
+reduced_rWords <- rWords %>% filter( nr < 6000 & nr > 30)
+length(reduced_rWords$word)
+#reduce the rrTokens data to keep only the reduced set of words
+reduced_rrTokens <- left_join( reduced_rWords, yelpTokens )
+#next, convert it to a DTM, where each row is for a review (document), and columns are the terms (words)
+revDTM <- reduced_rrTokens %>% pivot_wider(id_cols = c(review_id,starsReview), names_from = word, values_from = tf_idf ) %>% ungroup()
+dim(revDTM)
+
+#---------------------------------- RANDOM FOREST FOR BROADER SET OF TERMS --------------------------------
+#create the dependent variable Goodbad of good/bad reviews absed on stars, and remove the review with stars=3
+revDTM <- revDTM %>% filter(starsReview!=3) %>% mutate(Goodbad=ifelse(starsReview<=2, -1, 1)) %>% select(-starsReview)
+revDTM<-revDTM %>% replace(., is.na(.), 0)
+revDTM$Goodbad<-as.factor(revDTM$Goodbad)
+
+revDTM_split<- initial_split(revDTM, 0.5)
+
+revDTM_trn <- training(revDTM_split)
+revDTM_tst <- testing(revDTM_split)
+library(ranger)
+rfModel3<-ranger(dependent.variable.name = "Goodbad", data=revDTM_trn %>% select(-review_id), num.trees = 500, importance='permutation', probability = TRUE)
+
+importance(rfModel3) %>% view()
+#Making Predictions on train set
+revDTM_predTrn <- predict(rfModel3, revDTM_trn %>% select(-review_id))$predictions
+table(actual=revDTM_trn$Goodbad, preds=revDTM_predTrn[,2]>0.5)
+pred1=prediction(revDTM_predTrn[,2], revDTM_trn$Goodbad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+
+#Making Predictions on test set
+revDTM_predTst <- predict(rfModel3, revDTM_tst  %>% select(-review_id))$predictions
+table(actual=revDTM_tst$Goodbad, predictions=revDTM_predTst[,2]>0.5)
+pred1=prediction(revDTM_predTst[,2], revDTM_tst$Goodbad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+
+
+#---------------------------------- NAIVE BAYES FOR BROADER SET OF TERMS --------------------------------
+
+library(e1071)
+
+nbModel3 <- naiveBayes(Goodbad ~ ., data=revDTM_trn %>% select(-review_id))
+NBpredTrn <- predict(nbModel3, revDTM_trn, type = "raw")
+table(actual= revDTM_trn$Goodbad, predicted= NBpredTrn[,2]>0.5)
+auc(as.numeric(revDTM_trn$Goodbad), NBpredTrn[,2])
+
+
+#Predictions on test set
+NBpredTst <- predict(nbModel3, revDTM_tst, type = "raw")
+table(actual= revDTM_tst$Goodbad, predicted= NBpredTst[,2]>0.5)
+auc(as.numeric(revDTM_tst$Goodbad), NBpredTst[,2])
+
+
+rocTrn <- roc(revDTM_trn$Goodbad, NBpredTrn[,2], levels=c(-1, 1))
+rocTst <- roc(revDTM_tst$Goodbad, NBpredTst[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue', legacy.axes = TRUE)
+plot.roc(rocTst, col='red', add=TRUE)
+legend("bottomright", legend=c("Training", "Test"), col=c("blue", "red"), lwd=2, cex=0.8, bty='n')
+
+#---------------------------------- BOOSTED TREE FOR BROADER SET OF TERMS --------------------------------
+
+library(xgboost)
+library(Matrix)
+
+ctrain <- xgb.DMatrix(Matrix(data.matrix(revDTM_trn %>% select(-Goodbad , -review_id))), label = as.numeric(revDTM_trn$Goodbad)-1)
+
+xgbmodel_b <- xgboost(data = ctrain, max.depth = 10, eta = .001, min_child_weight = 2, nround = 1500, objective = "multi:softmax", num_class = 30 ,booster="gblinear" ,verbose = 2)
+revDTM_trn1 <- revDTM_trn %>% select(-Goodbad , -review_id)
+xgbmodel.predictTrn <- predict(xgbmodel_b, newdata = data.matrix(revDTM_trn1))
+table(prediction = as.numeric(xgbmodel.predictTrn), actual = revDTM_trn$Goodbad)
+roc(revDTM_trn$Goodbad, as.numeric(xgbmodel.predictTrn),  levels=c(-1, 1) )
+
+revDTM_tst1 <- revDTM_tst %>% select(-Goodbad , -review_id)
+xgbmodel.predict <- predict(xgbmodel_b, newdata = data.matrix(revDTM_tst1))
+
+table(prediction = as.numeric(xgbmodel.predict), actual = revDTM_tst$Goodbad )
+roc(revDTM_tst$Goodbad, as.numeric(xgbmodel.predict),  levels=c(-1, 1) )
+
+```
+
+```{r}
+############################ Question 6 #########################################
+
+x <- yelpReviews %>% select (review_id, attributes)
+paste(x[1,2])
+
+x2<-x %>% mutate (atts=str_split( attributes,'\\|')) %>% unnest(atts)
+
+x3<-x2 %>% cbind (str_split_fixed ( x2$atts, ":", 2))
+
+colnames(x3)[4] <- 'attName'
+colnames(x3)[5] <- 'attValue'
+colnames(x3)
+
+x3<-x3 %>% select (-c(attributes ,atts))
+x3<-x3 %>% filter(str_length(x3$attName) > 0)
+
+x4 <-x3 %>% pivot_wider(names_from = attName, values_from = attValue)
+dim(x4)
+glimpse(x4)
+
+paste(x4[1,3])
+
+x5<-x4 %>% mutate (amb = str_split(Ambience, ","))
+view(x5)
+
+x5$amb[5]
+
+
+#creating the function
+extractAmbience <-function(q)
+{  sub(":.*","", q[which(str_extract(q,"True") == "True")])}
+
+x6 <-x5 %>% mutate (amb = lapply (amb,extractAmbience ))
+
+view(x6)
+x6  %>%  group_by(amb) %>% tally() %>% view()
+y <- yelpReviews %>% select(business_id,review_id, starsReview)
+length (unique(y$business_id))
+x7 <- merge(x6,y)
+View(x7)
+x7 %>%  group_by(amb)  %>%   summarise(num_of_restaurants = n_distinct(business_id), AvgStar = mean(starsReview))  %>% arrange(desc(num_of_restaurants)) %>% view()
+
+x7 %>% filter(str_detect (amb,'casual')) %>% summarise(n(),AvgStar = mean(starsReview))
+x7 %>% filter(str_detect (amb,'classy')) %>% summarise(n(),AvgStar = mean(starsReview))
+x7 %>% filter(str_detect (amb,'trendy')) %>% summarise(n(),AvgStar = mean(starsReview))
+x7 %>% filter(str_detect (amb,'divey')) %>% summarise(n(),AvgStar = mean(starsReview))
+
+
+#Now we analyze different attribute 'GoodForMeal'
+
+paste(x4[1,7])
+x5<-x4 %>% mutate (GdFrMl = str_split (GoodForMeal, ","))
+
+dim(x4)
+dim(x5)
+
+typeof(x5$GdFrMl)
+
+x5$GdFrMl[1]
+x5$GdFrMl[2]
+
+#creating the function
+extractgood4meal<-function(q) 
+{  sub(":.*","", q[which(str_extract(q,"True") == "True")])
+}
+
+x6<-x5 %>% mutate (GdFrMl = lapply (GdFrMl, extractgood4meal ) ) 
+view(x6)
+#how many examples by different values for 'Good For Meal'
+x6%>%group_by(GdFrMl) %>% tally() %>% view()
+
+x7 <- merge(x6,y)
+x7 %>%  group_by(GdFrMl)  %>%   summarise(num_of_restaurants = n_distinct(business_id), AvgStar = mean(starsReview))  %>% arrange(desc(num_of_restaurants)) %>% view()
+
+
+x7%>%filter(str_detect (GdFrMl,'lunch'))  %>% summarise(n(),AvgStar = mean(starsReview))
+x7%>%filter(str_detect (GdFrMl,'dinner')) %>% summarise(n(),AvgStar = mean(starsReview))
+x7%>%filter(str_detect (GdFrMl,'breakfast')) %>% summarise(n(),AvgStar = mean(starsReview))
+x7%>%filter(str_detect (GdFrMl,'latenight')) %>% summarise(n(),AvgStar = mean(starsReview))
+
+
+
+#Now we analyze 'BusinessParking'
+
+
+paste(x4[1,5])
+x5 <- x4 %>% mutate( bsnsPrk = str_split( BusinessParking, ","))
+
+dim(x4)
+dim(x5)
+
+typeof(x5$bsnsPrk)
+
+x5$bsnsPrk[1]
+x5$bsnsPrk[1000]
+
+#creating the function to extract
+extractBuspark<-function(q) 
+{  sub(":.*","", q[which(str_extract(q, "True") == "True")])
+}
+
+x6<-x5%>% mutate (bsnsPrk=lapply(bsnsPrk, extractBuspark ) ) 
+
+#how many examples by different values for 'Bus Park'
+
+x6%>% group_by(bsnsPrk) %>% tally() %>% view()
+
+x7 <- merge(x6,y)
+x7 %>%  group_by(bsnsPrk)  %>%   summarise(num_of_restaurants = n_distinct(business_id), AvgStar = mean(starsReview))  %>% arrange(desc(num_of_restaurants)) %>% view()
+
+x7%>% filter(str_detect (bsnsPrk,'lot'))%>% summarise(n(),AvgStar = mean(starsReview))
+x7%>% filter(str_detect (bsnsPrk,'street'))%>% summarise(n(),AvgStar = mean(starsReview))
+x7%>% filter(str_detect (bsnsPrk,'valet'))%>% summarise(n(),AvgStar = mean(starsReview))
+x7%>% filter(str_detect (bsnsPrk,'garage'))%>% summarise(n(),AvgStar = mean(starsReview))
+
+
+#(b) Model Building
+
+attributes_yelp <- x7
+summary(x7)
+dim(x7)
+attributes_yelp <- attributes_yelp %>% replace(., is.na(.), 0)
+attributes_yelp1 <- attributes_yelp %>% select(BusinessAcceptsCreditCards , Caters , GoodForKids, OutdoorSeating, RestaurantsReservations,RestaurantsTableService,RestaurantsTakeOut,business_id,starsReview)
+view(attributes_yelp1)
+colnames(attributes_yelp1)
+as.numeric(gsub("True", 1, gsub("False", 0, attributes_yelp1$Caters)))
+
+attributes_yelp2 <- as.data.frame(lapply(attributes_yelp1, function(y) gsub("True", 1, gsub("False", 0, y))))
+view(attributes_yelp2)
+
+attributes_yelp2 <- attributes_yelp2 %>% mutate(actual_GoodBad = ifelse(starsReview <= 2, -1, ifelse(starsReview >=3, 1, 0 )))
+
+library(rsample)
+attributes_split<- initial_split(attributes_yelp2, 0.5)
+train_att <- training(attributes_split)
+test_att <- testing(attributes_split)
+
+library(ranger)
+rfModel_att <- ranger(as.factor(actual_GoodBad) ~., data= train_att %>% select( -starsReview), num.trees = 1500, importance='permutation', probability = TRUE)
+
+#Predicting on train set
+att_predTrn <- predict(rfModel_att, train_att %>% select(-starsReview))$predictions
+table(actual=train_att$actual_GoodBad, preds=as.numeric(att_predTrn[,2]> .8))
+
+
+#Predicting on test set
+att_predTst<- predict(rfModel_att, test_att )$predictions
+table(actual=test_att$actual_GoodBad, preds=as.numeric(att_predTst[,2]> .85))
+
+
+library(ROCR)
+library(pROC)
+rocTrn <- roc(test_att$actual_GoodBad, att_predTst[,2], levels=c(-1, 1))
+plot.roc(rocTrn, col='blue')
+pred1=prediction(att_predTst[,2], test_att$actual_GoodBad)
+sprintf("AUC: %f", performance(pred1, "auc")@y.values)
+```
+
