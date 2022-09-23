@@ -1,6 +1,6 @@
 ---
 title: "YelpAssignment"
-author: "Saloni Kataria(662519005), Anay Dutta(651901809), Silvy Mathew (653489701)"
+author: "Saloni Kataria(662519005)"
 date: "10/04/2022"
 output: html_document
 ---
