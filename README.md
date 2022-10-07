@@ -1,5 +1,5 @@
 # Yelp-user-reviews
-Predict sentiment score for yelp user reviews
+Predict sentiment score for yelp user reviews in R
 In this project, I have cleansed the data, removed stop words and perfomed the following: 
   - generated word clouds 
   - lemmatized
